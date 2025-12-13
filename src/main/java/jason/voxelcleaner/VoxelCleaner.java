@@ -12,14 +12,22 @@ import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
+import net.minecraft.block.ChestBlock;
+import net.minecraft.block.entity.BlockEntity;
+import net.minecraft.block.entity.ChestBlockEntity;
 import net.minecraft.command.argument.BlockStateArgument;
 import net.minecraft.command.argument.BlockStateArgumentType;
+import net.minecraft.inventory.Inventory;
+import net.minecraft.item.ItemStack;
 import net.minecraft.registry.Registries;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
+import net.minecraft.util.ItemScatterer;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
+import net.minecraft.world.World;
 
 import java.time.Instant;
 import java.time.ZoneId;
@@ -45,7 +53,7 @@ public class VoxelCleaner implements ModInitializer {
 	private static final Map<UUID, Deque<Action>> UNDO = new HashMap<>();
 	private static final Map<UUID, Deque<Action>> REDO = new HashMap<>();
 
-	private static final int MAX_UNDO_ACTIONS_PER_PLAYER = 10;
+	private static final int MAX_ACTIONS_PER_PLAYER = 10;
 	private static final int MAX_HISTORY_LINES = 20;
 
 	private static final DateTimeFormatter TS_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
@@ -55,27 +63,77 @@ public class VoxelCleaner implements ModInitializer {
 	public void onInitialize() {
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
 
-			UnaryOperator<com.mojang.brigadier.builder.LiteralArgumentBuilder<ServerCommandSource>> buildVoxelCleaner =
+			UnaryOperator<com.mojang.brigadier.builder.LiteralArgumentBuilder<ServerCommandSource>> buildCleaner =
 					root -> root
 							.then(argument("width", IntegerArgumentType.integer(1, MAX_W))
 									.then(argument("height", IntegerArgumentType.integer(1, MAX_H))
 											.then(argument("depth", IntegerArgumentType.integer(1, MAX_D))
-													.executes(ctx -> runClean(ctx, null, false))
+
+													.executes(ctx -> runClean(ctx, null, false, false))
+
 													.then(argument("force", BoolArgumentType.bool())
-															.executes(ctx -> runClean(ctx, null, BoolArgumentType.getBool(ctx, "force")))
+															.executes(ctx -> runClean(ctx, null, BoolArgumentType.getBool(ctx, "force"), false))
+															.then(argument("loot", BoolArgumentType.bool())
+																	.executes(ctx -> runClean(ctx, null, BoolArgumentType.getBool(ctx, "force"), BoolArgumentType.getBool(ctx, "loot")))
+															)
 													)
+
+													.then(argument("loot", BoolArgumentType.bool())
+															.executes(ctx -> runClean(ctx, null, false, BoolArgumentType.getBool(ctx, "loot")))
+													)
+
 													.then(argument("material", BlockStateArgumentType.blockState(registryAccess))
-															.executes(ctx -> runClean(ctx, getBlock(ctx, "material"), false))
+
+															.executes(ctx -> runClean(ctx, getBlock(ctx, "material"), false, false))
+
 															.then(argument("force2", BoolArgumentType.bool())
-																	.executes(ctx -> runClean(ctx, getBlock(ctx, "material"), BoolArgumentType.getBool(ctx, "force2")))
+																	.executes(ctx -> runClean(ctx, getBlock(ctx, "material"), BoolArgumentType.getBool(ctx, "force2"), false))
+																	.then(argument("loot2", BoolArgumentType.bool())
+																			.executes(ctx -> runClean(ctx, getBlock(ctx, "material"), BoolArgumentType.getBool(ctx, "force2"), BoolArgumentType.getBool(ctx, "loot2")))
+																	)
+															)
+
+															.then(argument("loot2", BoolArgumentType.bool())
+																	.executes(ctx -> runClean(ctx, getBlock(ctx, "material"), false, BoolArgumentType.getBool(ctx, "loot2")))
 															)
 													)
 											)
 									)
 							);
 
-			dispatcher.register(buildVoxelCleaner.apply(literal("voxelcleaner")));
-			dispatcher.register(buildVoxelCleaner.apply(literal("vc")));
+			dispatcher.register(buildCleaner.apply(literal("voxelcleaner")));
+			dispatcher.register(buildCleaner.apply(literal("vc")));
+
+			UnaryOperator<com.mojang.brigadier.builder.LiteralArgumentBuilder<ServerCommandSource>> buildRoom =
+					root -> root
+							.then(argument("width", IntegerArgumentType.integer(1, MAX_W))
+									.then(argument("height", IntegerArgumentType.integer(1, MAX_H))
+											.then(argument("depth", IntegerArgumentType.integer(1, MAX_D))
+													.then(argument("walls", BlockStateArgumentType.blockState(registryAccess))
+															.then(argument("floor", BlockStateArgumentType.blockState(registryAccess))
+																	.then(argument("ceiling", BlockStateArgumentType.blockState(registryAccess))
+
+																			.executes(ctx -> runRoom(ctx, false, false))
+
+																			.then(argument("force", BoolArgumentType.bool())
+																					.executes(ctx -> runRoom(ctx, BoolArgumentType.getBool(ctx, "force"), false))
+																					.then(argument("loot", BoolArgumentType.bool())
+																							.executes(ctx -> runRoom(ctx, BoolArgumentType.getBool(ctx, "force"), BoolArgumentType.getBool(ctx, "loot")))
+																					)
+																			)
+
+																			.then(argument("loot", BoolArgumentType.bool())
+																					.executes(ctx -> runRoom(ctx, false, BoolArgumentType.getBool(ctx, "loot")))
+																			)
+																	)
+															)
+													)
+											)
+									)
+							);
+
+			dispatcher.register(buildRoom.apply(literal("voxelroom")));
+			dispatcher.register(buildRoom.apply(literal("vr")));
 
 			UnaryOperator<com.mojang.brigadier.builder.LiteralArgumentBuilder<ServerCommandSource>> buildUndo =
 					root -> root
@@ -106,32 +164,10 @@ public class VoxelCleaner implements ModInitializer {
 
 			dispatcher.register(buildHistory.apply(literal("voxelhistory")));
 			dispatcher.register(buildHistory.apply(literal("vch")));
-
-			UnaryOperator<com.mojang.brigadier.builder.LiteralArgumentBuilder<ServerCommandSource>> buildRoom =
-					root -> root
-							.then(argument("width", IntegerArgumentType.integer(1, MAX_W))
-									.then(argument("height", IntegerArgumentType.integer(1, MAX_H))
-											.then(argument("depth", IntegerArgumentType.integer(1, MAX_D))
-													.then(argument("walls", BlockStateArgumentType.blockState(registryAccess))
-															.then(argument("floor", BlockStateArgumentType.blockState(registryAccess))
-																	.then(argument("ceiling", BlockStateArgumentType.blockState(registryAccess))
-																			.executes(ctx -> runRoom(ctx, false))
-																			.then(argument("force", BoolArgumentType.bool())
-																					.executes(ctx -> runRoom(ctx, BoolArgumentType.getBool(ctx, "force")))
-																			)
-																	)
-															)
-													)
-											)
-									)
-							);
-
-			dispatcher.register(buildRoom.apply(literal("voxelroom")));
-			dispatcher.register(buildRoom.apply(literal("vr")));
 		});
 	}
 
-	private static int runClean(CommandContext<ServerCommandSource> ctx, Block shell, boolean force) {
+	private static int runClean(CommandContext<ServerCommandSource> ctx, Block shell, boolean force, boolean loot) {
 		ServerPlayerEntity player = player(ctx.getSource());
 		if (player == null) return 0;
 
@@ -139,17 +175,21 @@ public class VoxelCleaner implements ModInitializer {
 		int h = IntegerArgumentType.getInteger(ctx, "height");
 		int d = IntegerArgumentType.getInteger(ctx, "depth");
 
-		Result r = hollow(player, w, h, d, shell, force);
+		Result r = hollow(player, w, h, d, shell, force, loot);
+
 		if (!r.action.snapshots.isEmpty()) {
 			pushUndo(player.getUuid(), r.action);
 			clearRedo(player.getUuid());
 		}
 
 		ctx.getSource().sendFeedback(() -> Text.literal("VoxelCleaner: " + r.action.changed), false);
+		if (loot && !player.isCreative()) {
+			ctx.getSource().sendFeedback(() -> Text.literal("Loot: " + r.action.lootItems), false);
+		}
 		return Command.SINGLE_SUCCESS;
 	}
 
-	private static int runRoom(CommandContext<ServerCommandSource> ctx, boolean force) {
+	private static int runRoom(CommandContext<ServerCommandSource> ctx, boolean force, boolean loot) {
 		ServerPlayerEntity player = player(ctx.getSource());
 		if (player == null) return 0;
 
@@ -162,17 +202,21 @@ public class VoxelCleaner implements ModInitializer {
 		Block ceiling = getBlock(ctx, "ceiling");
 
 		if (walls == Blocks.AIR || floor == Blocks.AIR || ceiling == Blocks.AIR) {
-			ctx.getSource().sendError(Text.literal("VoxelRoom: AIR ist für walls/floor/ceiling nicht erlaubt."));
+			ctx.getSource().sendError(Text.literal("AIR ist für walls/floor/ceiling nicht erlaubt."));
 			return 0;
 		}
 
-		Result r = room(player, w, h, d, walls, floor, ceiling, force);
+		Result r = room(player, w, h, d, walls, floor, ceiling, force, loot);
+
 		if (!r.action.snapshots.isEmpty()) {
 			pushUndo(player.getUuid(), r.action);
 			clearRedo(player.getUuid());
 		}
 
 		ctx.getSource().sendFeedback(() -> Text.literal("VoxelRoom: " + r.action.changed), false);
+		if (loot && !player.isCreative()) {
+			ctx.getSource().sendFeedback(() -> Text.literal("Loot: " + r.action.lootItems), false);
+		}
 		return Command.SINGLE_SUCCESS;
 	}
 
@@ -243,6 +287,7 @@ public class VoxelCleaner implements ModInitializer {
 							" inner=" + a.iw + "x" + a.ih + "x" + a.id +
 							" shell=" + shell +
 							" force=" + a.force +
+							" loot=" + a.loot +
 							" changed=" + a.changed
 			), false);
 			i++;
@@ -265,8 +310,10 @@ public class VoxelCleaner implements ModInitializer {
 		return arg.getBlockState().getBlock();
 	}
 
-	private static Result room(ServerPlayerEntity player, int iw, int ih, int id, Block walls, Block floor, Block ceiling, boolean force) {
-		var world = player.getEntityWorld();
+	private static Result room(ServerPlayerEntity player, int iw, int ih, int id, Block walls, Block floor, Block ceiling, boolean force, boolean loot) {
+		World w0 = player.getEntityWorld();
+		if (!(w0 instanceof ServerWorld world)) return emptyResult(iw, ih, id, "room", force, loot);
+
 		String dim = world.getRegistryKey().getValue().toString();
 		long now = System.currentTimeMillis();
 
@@ -283,6 +330,9 @@ public class VoxelCleaner implements ModInitializer {
 		int maxW = minW + ow - 1;
 
 		int changed = 0;
+		int lootItems = 0;
+		List<ItemStack> collected = loot && !player.isCreative() ? new ArrayList<>() : null;
+
 		List<Snapshot> snaps = new ArrayList<>();
 
 		BlockState wallsState = walls.getDefaultState();
@@ -307,12 +357,9 @@ public class VoxelCleaner implements ModInitializer {
 					if (shellPos) {
 						if (!force && isProtected(st)) continue;
 
-						BlockState targetState;
-						if (dy == 0) targetState = floorState;
-						else if (dy == oh - 1) targetState = ceilState;
-						else targetState = wallsState;
+						BlockState targetState = (dy == 0) ? floorState : (dy == oh - 1) ? ceilState : wallsState;
 
-						if (st != targetState) {
+						if (!st.equals(targetState)) {
 							snaps.add(new Snapshot(p, st, targetState));
 							world.setBlockState(p, targetState, 3);
 							changed++;
@@ -325,23 +372,35 @@ public class VoxelCleaner implements ModInitializer {
 
 					snaps.add(new Snapshot(p, st, airState));
 
-					if (player.isCreative()) {
-						world.setBlockState(p, airState, 3);
+					if (player.isCreative() || !loot) {
+						if (player.isCreative()) world.setBlockState(p, airState, 3);
+						else world.breakBlock(p, true, player);
 					} else {
-						world.breakBlock(p, true, player);
+						lootItems += breakAndCollect(world, player, p, st, collected);
 					}
+
 					changed++;
 				}
 			}
 		}
 
+		if (loot && !player.isCreative() && collected != null && !collected.isEmpty()) {
+			int placed = placeLootChestsAndFill(world, base, f, s, ow, oh, od, minW, maxW, collected, player.getHorizontalFacing().getOpposite());
+			if (placed == 0) {
+				BlockPos dropAt = roomCenterPos(base, f, s, ow, od, minW);
+				dropStacks(world, dropAt, collected);
+			}
+		}
+
 		String shellId = "room:walls=" + Registries.BLOCK.getId(walls) + ",floor=" + Registries.BLOCK.getId(floor) + ",ceiling=" + Registries.BLOCK.getId(ceiling);
-		Action action = new Action(dim, now, iw, ih, id, shellId, force, changed, snaps);
+		Action action = new Action(dim, now, iw, ih, id, shellId, force, loot, changed, lootItems, snaps);
 		return new Result(action);
 	}
 
-	private static Result hollow(ServerPlayerEntity player, int iw, int ih, int id, Block shell, boolean force) {
-		var world = player.getEntityWorld();
+	private static Result hollow(ServerPlayerEntity player, int iw, int ih, int id, Block shell, boolean force, boolean loot) {
+		World w0 = player.getEntityWorld();
+		if (!(w0 instanceof ServerWorld world)) return emptyResult(iw, ih, id, null, force, loot);
+
 		String dim = world.getRegistryKey().getValue().toString();
 		long now = System.currentTimeMillis();
 
@@ -358,6 +417,9 @@ public class VoxelCleaner implements ModInitializer {
 		int maxW = minW + ow - 1;
 
 		int changed = 0;
+		int lootItems = 0;
+		List<ItemStack> collected = loot && !player.isCreative() ? new ArrayList<>() : null;
+
 		List<Snapshot> snaps = new ArrayList<>();
 
 		BlockState shellState = shell == null ? null : shell.getDefaultState();
@@ -380,7 +442,7 @@ public class VoxelCleaner implements ModInitializer {
 					if (shellPos) {
 						if (shellState != null && shell != Blocks.AIR) {
 							if (!force && isProtected(st)) continue;
-							if (st.getBlock() != shell) {
+							if (!st.equals(shellState)) {
 								snaps.add(new Snapshot(p, st, shellState));
 								world.setBlockState(p, shellState, 3);
 								changed++;
@@ -394,19 +456,197 @@ public class VoxelCleaner implements ModInitializer {
 
 					snaps.add(new Snapshot(p, st, airState));
 
-					if (player.isCreative()) {
-						world.setBlockState(p, airState, 3);
+					if (player.isCreative() || !loot) {
+						if (player.isCreative()) world.setBlockState(p, airState, 3);
+						else world.breakBlock(p, true, player);
 					} else {
-						world.breakBlock(p, true, player);
+						lootItems += breakAndCollect(world, player, p, st, collected);
 					}
+
 					changed++;
 				}
 			}
 		}
 
+		if (loot && !player.isCreative() && collected != null && !collected.isEmpty()) {
+			int placed = placeLootChestsAndFill(world, base, f, s, ow, oh, od, minW, maxW, collected, player.getHorizontalFacing().getOpposite());
+			if (placed == 0) {
+				BlockPos dropAt = roomCenterPos(base, f, s, ow, od, minW);
+				dropStacks(world, dropAt, collected);
+			}
+		}
+
 		String shellId = shell == null ? null : Registries.BLOCK.getId(shell).toString();
-		Action action = new Action(dim, now, iw, ih, id, shellId, force, changed, snaps);
+		Action action = new Action(dim, now, iw, ih, id, shellId, force, loot, changed, lootItems, snaps);
 		return new Result(action);
+	}
+
+	private static int breakAndCollect(ServerWorld world, ServerPlayerEntity player, BlockPos pos, BlockState state, List<ItemStack> out) {
+		BlockEntity be = world.getBlockEntity(pos);
+		ItemStack tool = player.getMainHandStack();
+
+		List<ItemStack> drops = Block.getDroppedStacks(state, world, pos, be, player, tool);
+
+		world.setBlockState(pos, Blocks.AIR.getDefaultState(), 3);
+		if (be != null) world.removeBlockEntity(pos);
+
+		int c = 0;
+		for (ItemStack st : drops) {
+			if (st == null || st.isEmpty()) continue;
+			out.add(st.copy());
+			c += st.getCount();
+		}
+		return c;
+	}
+
+	private static int placeLootChestsAndFill(ServerWorld world,
+											  BlockPos base,
+											  Direction facing,
+											  Direction sideways,
+											  int outerWidth,
+											  int outerHeight,
+											  int outerDepth,
+											  int minW,
+											  int maxW,
+											  List<ItemStack> stacks,
+											  Direction chestFacing) {
+
+		if (stacks.isEmpty()) return 0;
+
+		int interiorY = base.getY() + 1;
+		int minDepth = 1;
+		int maxDepth = outerDepth - 2;
+		int minWidth = minW + 1;
+		int maxWidth = maxW - 1;
+
+		List<BlockPos> chestSlots = new ArrayList<>();
+
+		int centerDepth = (outerDepth - 1) / 2;
+		int centerWidth = minW + (outerWidth - 1) / 2;
+
+		List<Integer> depthOrder = new ArrayList<>();
+		depthOrder.add(centerDepth);
+		for (int step = 1; step <= Math.max(centerDepth - minDepth, maxDepth - centerDepth); step++) {
+			int a = centerDepth - step;
+			int b = centerDepth + step;
+			if (a >= minDepth) depthOrder.add(a);
+			if (b <= maxDepth) depthOrder.add(b);
+		}
+
+		List<Integer> widthOrder = new ArrayList<>();
+		widthOrder.add(centerWidth);
+		for (int step = 1; step <= Math.max(centerWidth - minWidth, maxWidth - centerWidth); step++) {
+			int a = centerWidth - step;
+			int b = centerWidth + step;
+			if (a >= minWidth) widthOrder.add(a);
+			if (b <= maxWidth) widthOrder.add(b);
+		}
+
+		for (int dz : depthOrder) {
+			for (int w : widthOrder) {
+				int w2 = w + 1;
+				if (w < minWidth || w > maxWidth) continue;
+				if (w2 < minWidth || w2 > maxWidth) continue;
+
+				BlockPos p1 = base.offset(facing, dz).offset(sideways, w).withY(interiorY);
+				BlockPos p2 = base.offset(facing, dz).offset(sideways, w2).withY(interiorY);
+
+				if (!isPlaceableChestSpot(world, p1) || !isPlaceableChestSpot(world, p2)) continue;
+
+				if (!placeChest(world, p1, chestFacing)) continue;
+				if (!placeChest(world, p2, chestFacing)) continue;
+
+				chestSlots.add(p1);
+				chestSlots.add(p2);
+
+				if (tryFill(world, chestSlots, stacks)) {
+					return chestSlots.size();
+				}
+			}
+		}
+
+		tryFill(world, chestSlots, stacks);
+		return chestSlots.size();
+	}
+
+	private static boolean isPlaceableChestSpot(ServerWorld world, BlockPos pos) {
+		BlockState st = world.getBlockState(pos);
+		if (st.getBlock() == Blocks.BEDROCK) return false;
+		if (!st.isAir() && st.getBlock() != Blocks.AIR) return false;
+		BlockState above = world.getBlockState(pos.up());
+		return above.isAir();
+	}
+
+	private static boolean placeChest(ServerWorld world, BlockPos pos, Direction facing) {
+		BlockState chest = Blocks.CHEST.getDefaultState().with(ChestBlock.FACING, facing);
+		return world.setBlockState(pos, chest, 3);
+	}
+
+	private static boolean tryFill(ServerWorld world, List<BlockPos> chestPositions, List<ItemStack> stacks) {
+		if (chestPositions.isEmpty()) return false;
+
+		for (int i = 0; i < stacks.size(); i++) {
+			ItemStack st = stacks.get(i);
+			if (st == null || st.isEmpty()) continue;
+
+			for (BlockPos cp : chestPositions) {
+				BlockEntity be = world.getBlockEntity(cp);
+				if (!(be instanceof ChestBlockEntity chest)) continue;
+
+                st = insertIntoInventory(chest, st);
+
+				if (st.isEmpty()) break;
+			}
+
+			stacks.set(i, st);
+		}
+
+		for (ItemStack st : stacks) {
+			if (st != null && !st.isEmpty()) return false;
+		}
+		return true;
+	}
+
+	private static ItemStack insertIntoInventory(Inventory inv, ItemStack stack) {
+		if (stack == null || stack.isEmpty()) return ItemStack.EMPTY;
+
+		for (int i = 0; i < inv.size(); i++) {
+			ItemStack slot = inv.getStack(i);
+			if (!slot.isEmpty()
+					&& ItemStack.areItemsAndComponentsEqual(slot, stack)
+					&& slot.getCount() < slot.getMaxCount()) {
+
+				int canMove = Math.min(stack.getCount(), slot.getMaxCount() - slot.getCount());
+				slot.increment(canMove);
+				stack.decrement(canMove);
+				inv.setStack(i, slot);
+				if (stack.isEmpty()) return ItemStack.EMPTY;
+			}
+		}
+
+		for (int i = 0; i < inv.size(); i++) {
+			ItemStack slot = inv.getStack(i);
+			if (slot.isEmpty()) {
+				inv.setStack(i, stack);
+				return ItemStack.EMPTY;
+			}
+		}
+
+		return stack;
+	}
+
+	private static BlockPos roomCenterPos(BlockPos base, Direction facing, Direction sideways, int outerWidth, int outerDepth, int minW) {
+		int centerDepth = (outerDepth - 1) / 2;
+		int centerWidth = minW + (outerWidth - 1) / 2;
+		return base.offset(facing, centerDepth).offset(sideways, centerWidth).up(1);
+	}
+
+	private static void dropStacks(ServerWorld world, BlockPos pos, List<ItemStack> stacks) {
+		for (ItemStack st : stacks) {
+			if (st == null || st.isEmpty()) continue;
+			ItemScatterer.spawn(world, pos.getX(), pos.getY(), pos.getZ(), st);
+		}
+		stacks.clear();
 	}
 
 	private static boolean isProtected(BlockState s) {
@@ -417,13 +657,13 @@ public class VoxelCleaner implements ModInitializer {
 	private static void pushUndo(UUID playerId, Action action) {
 		Deque<Action> stack = UNDO.computeIfAbsent(playerId, k -> new ArrayDeque<>());
 		stack.push(action);
-		while (stack.size() > MAX_UNDO_ACTIONS_PER_PLAYER) stack.removeLast();
+		while (stack.size() > MAX_ACTIONS_PER_PLAYER) stack.removeLast();
 	}
 
 	private static void pushRedo(UUID playerId, Action action) {
 		Deque<Action> stack = REDO.computeIfAbsent(playerId, k -> new ArrayDeque<>());
 		stack.push(action);
-		while (stack.size() > MAX_UNDO_ACTIONS_PER_PLAYER) stack.removeLast();
+		while (stack.size() > MAX_ACTIONS_PER_PLAYER) stack.removeLast();
 	}
 
 	private static void clearRedo(UUID playerId) {
@@ -435,7 +675,8 @@ public class VoxelCleaner implements ModInitializer {
 		Deque<Action> stack = UNDO.get(player.getUuid());
 		if (stack == null || stack.isEmpty()) return 0;
 
-		var world = player.getEntityWorld();
+		World w0 = player.getEntityWorld();
+		if (!(w0 instanceof ServerWorld world)) return 0;
 		String currentDim = world.getRegistryKey().getValue().toString();
 
 		Action action = stack.pop();
@@ -446,7 +687,6 @@ public class VoxelCleaner implements ModInitializer {
 
 		int restored = 0;
 		List<Snapshot> snaps = action.snapshots;
-
 		for (int i = snaps.size() - 1; i >= 0; i--) {
 			Snapshot s = snaps.get(i);
 			world.setBlockState(s.pos, s.before, 3);
@@ -461,7 +701,8 @@ public class VoxelCleaner implements ModInitializer {
 		Deque<Action> stack = REDO.get(player.getUuid());
 		if (stack == null || stack.isEmpty()) return 0;
 
-		var world = player.getEntityWorld();
+		World w0 = player.getEntityWorld();
+		if (!(w0 instanceof ServerWorld world)) return 0;
 		String currentDim = world.getRegistryKey().getValue().toString();
 
 		Action action = stack.pop();
@@ -472,7 +713,6 @@ public class VoxelCleaner implements ModInitializer {
 
 		int applied = 0;
 		List<Snapshot> snaps = action.snapshots;
-
 		for (int i = snaps.size() - 1; i >= 0; i--) {
 			Snapshot s = snaps.get(i);
 			world.setBlockState(s.pos, s.after, 3);
@@ -483,7 +723,12 @@ public class VoxelCleaner implements ModInitializer {
 		return applied;
 	}
 
+	private static Result emptyResult(int iw, int ih, int id, String shellId, boolean force, boolean loot) {
+		Action action = new Action("?", System.currentTimeMillis(), iw, ih, id, shellId, force, loot, 0, 0, List.of());
+		return new Result(action);
+	}
+
 	private record Snapshot(BlockPos pos, BlockState before, BlockState after) {}
-	private record Action(String dimensionId, long epochMs, int iw, int ih, int id, String shellId, boolean force, int changed, List<Snapshot> snapshots) {}
+	private record Action(String dimensionId, long epochMs, int iw, int ih, int id, String shellId, boolean force, boolean loot, int changed, int lootItems, List<Snapshot> snapshots) {}
 	private record Result(Action action) {}
 }
