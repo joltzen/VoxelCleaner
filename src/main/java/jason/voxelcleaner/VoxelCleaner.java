@@ -60,14 +60,14 @@ public class VoxelCleaner implements ModInitializer {
 							.then(argument("width", IntegerArgumentType.integer(1, MAX_W))
 									.then(argument("height", IntegerArgumentType.integer(1, MAX_H))
 											.then(argument("depth", IntegerArgumentType.integer(1, MAX_D))
-													.executes(ctx -> run(ctx, null, false))
+													.executes(ctx -> runClean(ctx, null, false))
 													.then(argument("force", BoolArgumentType.bool())
-															.executes(ctx -> run(ctx, null, BoolArgumentType.getBool(ctx, "force")))
+															.executes(ctx -> runClean(ctx, null, BoolArgumentType.getBool(ctx, "force")))
 													)
 													.then(argument("material", BlockStateArgumentType.blockState(registryAccess))
-															.executes(ctx -> run(ctx, getBlock(ctx), false))
+															.executes(ctx -> runClean(ctx, getBlock(ctx, "material"), false))
 															.then(argument("force2", BoolArgumentType.bool())
-																	.executes(ctx -> run(ctx, getBlock(ctx), BoolArgumentType.getBool(ctx, "force2")))
+																	.executes(ctx -> runClean(ctx, getBlock(ctx, "material"), BoolArgumentType.getBool(ctx, "force2")))
 															)
 													)
 											)
@@ -106,10 +106,32 @@ public class VoxelCleaner implements ModInitializer {
 
 			dispatcher.register(buildHistory.apply(literal("voxelhistory")));
 			dispatcher.register(buildHistory.apply(literal("vch")));
+
+			UnaryOperator<com.mojang.brigadier.builder.LiteralArgumentBuilder<ServerCommandSource>> buildRoom =
+					root -> root
+							.then(argument("width", IntegerArgumentType.integer(1, MAX_W))
+									.then(argument("height", IntegerArgumentType.integer(1, MAX_H))
+											.then(argument("depth", IntegerArgumentType.integer(1, MAX_D))
+													.then(argument("walls", BlockStateArgumentType.blockState(registryAccess))
+															.then(argument("floor", BlockStateArgumentType.blockState(registryAccess))
+																	.then(argument("ceiling", BlockStateArgumentType.blockState(registryAccess))
+																			.executes(ctx -> runRoom(ctx, false))
+																			.then(argument("force", BoolArgumentType.bool())
+																					.executes(ctx -> runRoom(ctx, BoolArgumentType.getBool(ctx, "force")))
+																			)
+																	)
+															)
+													)
+											)
+									)
+							);
+
+			dispatcher.register(buildRoom.apply(literal("voxelroom")));
+			dispatcher.register(buildRoom.apply(literal("vr")));
 		});
 	}
 
-	private static int run(CommandContext<ServerCommandSource> ctx, Block shell, boolean force) {
+	private static int runClean(CommandContext<ServerCommandSource> ctx, Block shell, boolean force) {
 		ServerPlayerEntity player = player(ctx.getSource());
 		if (player == null) return 0;
 
@@ -118,13 +140,39 @@ public class VoxelCleaner implements ModInitializer {
 		int d = IntegerArgumentType.getInteger(ctx, "depth");
 
 		Result r = hollow(player, w, h, d, shell, force);
-
 		if (!r.action.snapshots.isEmpty()) {
 			pushUndo(player.getUuid(), r.action);
 			clearRedo(player.getUuid());
 		}
 
 		ctx.getSource().sendFeedback(() -> Text.literal("VoxelCleaner: " + r.action.changed), false);
+		return Command.SINGLE_SUCCESS;
+	}
+
+	private static int runRoom(CommandContext<ServerCommandSource> ctx, boolean force) {
+		ServerPlayerEntity player = player(ctx.getSource());
+		if (player == null) return 0;
+
+		int w = IntegerArgumentType.getInteger(ctx, "width");
+		int h = IntegerArgumentType.getInteger(ctx, "height");
+		int d = IntegerArgumentType.getInteger(ctx, "depth");
+
+		Block walls = getBlock(ctx, "walls");
+		Block floor = getBlock(ctx, "floor");
+		Block ceiling = getBlock(ctx, "ceiling");
+
+		if (walls == Blocks.AIR || floor == Blocks.AIR || ceiling == Blocks.AIR) {
+			ctx.getSource().sendError(Text.literal("VoxelRoom: AIR ist für walls/floor/ceiling nicht erlaubt."));
+			return 0;
+		}
+
+		Result r = room(player, w, h, d, walls, floor, ceiling, force);
+		if (!r.action.snapshots.isEmpty()) {
+			pushUndo(player.getUuid(), r.action);
+			clearRedo(player.getUuid());
+		}
+
+		ctx.getSource().sendFeedback(() -> Text.literal("VoxelRoom: " + r.action.changed), false);
 		return Command.SINGLE_SUCCESS;
 	}
 
@@ -212,9 +260,84 @@ public class VoxelCleaner implements ModInitializer {
 		}
 	}
 
-	private static Block getBlock(CommandContext<ServerCommandSource> ctx) {
-		BlockStateArgument arg = BlockStateArgumentType.getBlockState(ctx, "material");
+	private static Block getBlock(CommandContext<ServerCommandSource> ctx, String argName) {
+		BlockStateArgument arg = BlockStateArgumentType.getBlockState(ctx, argName);
 		return arg.getBlockState().getBlock();
+	}
+
+	private static Result room(ServerPlayerEntity player, int iw, int ih, int id, Block walls, Block floor, Block ceiling, boolean force) {
+		var world = player.getEntityWorld();
+		String dim = world.getRegistryKey().getValue().toString();
+		long now = System.currentTimeMillis();
+
+		int ow = iw + 2;
+		int oh = ih + 2;
+		int od = id + 2;
+
+		Direction f = player.getHorizontalFacing();
+		Direction s = f.rotateYClockwise();
+
+		BlockPos base = player.getBlockPos().down().offset(f, 1);
+
+		int minW = -(ow / 2);
+		int maxW = minW + ow - 1;
+
+		int changed = 0;
+		List<Snapshot> snaps = new ArrayList<>();
+
+		BlockState wallsState = walls.getDefaultState();
+		BlockState floorState = floor.getDefaultState();
+		BlockState ceilState = ceiling.getDefaultState();
+		BlockState airState = Blocks.AIR.getDefaultState();
+
+		for (int dz = 0; dz < od; dz++) {
+			for (int dx = minW; dx <= maxW; dx++) {
+				for (int dy = 0; dy < oh; dy++) {
+
+					BlockPos p = base.offset(f, dz).offset(s, dx).up(dy);
+					BlockState st = world.getBlockState(p);
+
+					if (st.getBlock() == Blocks.BEDROCK) continue;
+
+					boolean shellPos =
+							dz == 0 || dz == od - 1 ||
+									dx == minW || dx == maxW ||
+									dy == 0 || dy == oh - 1;
+
+					if (shellPos) {
+						if (!force && isProtected(st)) continue;
+
+						BlockState targetState;
+						if (dy == 0) targetState = floorState;
+						else if (dy == oh - 1) targetState = ceilState;
+						else targetState = wallsState;
+
+						if (st != targetState) {
+							snaps.add(new Snapshot(p, st, targetState));
+							world.setBlockState(p, targetState, 3);
+							changed++;
+						}
+						continue;
+					}
+
+					if (st.isAir()) continue;
+					if (!force && isProtected(st)) continue;
+
+					snaps.add(new Snapshot(p, st, airState));
+
+					if (player.isCreative()) {
+						world.setBlockState(p, airState, 3);
+					} else {
+						world.breakBlock(p, true, player);
+					}
+					changed++;
+				}
+			}
+		}
+
+		String shellId = "room:walls=" + Registries.BLOCK.getId(walls) + ",floor=" + Registries.BLOCK.getId(floor) + ",ceiling=" + Registries.BLOCK.getId(ceiling);
+		Action action = new Action(dim, now, iw, ih, id, shellId, force, changed, snaps);
+		return new Result(action);
 	}
 
 	private static Result hollow(ServerPlayerEntity player, int iw, int ih, int id, Block shell, boolean force) {
