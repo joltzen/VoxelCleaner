@@ -27,6 +27,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.UnaryOperator;
 
 import static net.minecraft.server.command.CommandManager.argument;
 import static net.minecraft.server.command.CommandManager.literal;
@@ -44,8 +45,8 @@ public class VoxelCleaner implements ModInitializer {
 	public void onInitialize() {
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
 
-			dispatcher.register(
-					literal("voxelcleaner")
+			UnaryOperator<com.mojang.brigadier.builder.LiteralArgumentBuilder<ServerCommandSource>> buildVoxelCleaner =
+					root -> root
 							.then(argument("width", IntegerArgumentType.integer(1, MAX_W))
 									.then(argument("height", IntegerArgumentType.integer(1, MAX_H))
 											.then(argument("depth", IntegerArgumentType.integer(1, MAX_D))
@@ -61,16 +62,20 @@ public class VoxelCleaner implements ModInitializer {
 													)
 											)
 									)
-							)
-			);
+							);
 
-			dispatcher.register(
-					literal("voxelundo")
+			dispatcher.register(buildVoxelCleaner.apply(literal("voxelcleaner")));
+			dispatcher.register(buildVoxelCleaner.apply(literal("vc")));
+
+			UnaryOperator<com.mojang.brigadier.builder.LiteralArgumentBuilder<ServerCommandSource>> buildUndo =
+					root -> root
 							.executes(ctx -> undo(ctx, 1))
 							.then(argument("count", IntegerArgumentType.integer(1, 10))
 									.executes(ctx -> undo(ctx, IntegerArgumentType.getInteger(ctx, "count")))
-							)
-			);
+							);
+
+			dispatcher.register(buildUndo.apply(literal("voxelundo")));
+			dispatcher.register(buildUndo.apply(literal("vcu")));
 		});
 	}
 
