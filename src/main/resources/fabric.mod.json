@@ -3,42 +3,42 @@
 	"id": "voxelcleaner",
 	"version": "${version}",
 	"name": "VoxelCleaner",
-	"description": "This is an example description! Tell everyone what your mod is about!",
-	"authors": [
-		"Me!"
-	],
+	"description": "In-game voxel editing commands: clean, room, hollow/fill/replace with loot/force options and undo history.",
+	"authors": ["JasonFight"],
 	"contact": {
-		"homepage": "https://fabricmc.net/",
-		"sources": "https://github.com/FabricMC/fabric-example-mod"
+		"homepage": "https://modrinth.com/mod/voxelcleaner",
+		"sources": "https://github.com/joltzen/VoxelCleaner",
+		"issues": "https://github.com/joltzen/VoxelCleaner/issues"
 	},
 	"license": "CC0-1.0",
 	"icon": "assets/voxelcleaner/icon.png",
 	"environment": "*",
+
 	"entrypoints": {
-		"main": [
-			"jason.voxelcleaner.VoxelCleaner"
-		],
-		"client": [
-			"jason.voxelcleaner.VoxelCleanerClient"
-		],
-		"fabric-datagen": [
-			"jason.voxelcleaner.VoxelCleanerDataGenerator"
-		]
+		"main": ["jason.voxelcleaner.VoxelCleaner"],
+		"client": ["jason.voxelcleaner.VoxelCleanerClient"],
+		"fabric-datagen": ["jason.voxelcleaner.VoxelCleanerDataGenerator"]
 	},
+
 	"mixins": [
 		"voxelcleaner.mixins.json",
-		{
-			"config": "voxelcleaner.client.mixins.json",
-			"environment": "client"
-		}
+		{ "config": "voxelcleaner.client.mixins.json", "environment": "client" }
 	],
+
 	"depends": {
 		"fabricloader": ">=0.18.2",
 		"minecraft": "~1.21.11",
 		"java": ">=21",
 		"fabric-api": "*"
 	},
-	"suggests": {
-		"another-mod": "*"
+
+	"custom": {
+		"modmenu": {
+			"links": {
+				"modmenu.modrinth": "https://modrinth.com/mod/voxelcleaner",
+				"modmenu.github": "https://github.com/joltzen/VoxelCleaner"
+			},
+			"update_checker": true
+		}
 	}
 }
