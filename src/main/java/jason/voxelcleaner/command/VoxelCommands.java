@@ -31,7 +31,6 @@ import static net.minecraft.server.command.CommandManager.literal;
 public final class VoxelCommands {
 
     private static final VoxelOperations OPS = new VoxelOperations();
-    private static final PreviewService PREVIEW = new PreviewService();
     private static final HistoryService HISTORY = new HistoryService();
 
     private VoxelCommands() {}
@@ -503,7 +502,7 @@ public final class VoxelCommands {
         int h = IntegerArgumentType.getInteger(ctx, "height");
         int d = IntegerArgumentType.getInteger(ctx, "depth");
 
-        PREVIEW.previewBox(player, w, h, d, addShellPadding);
+        PreviewService.previewBox(player, w, h, d, addShellPadding);
         ctx.getSource().sendFeedback(() -> Text.literal("VoxelPreview: OK"), false);
         return Command.SINGLE_SUCCESS;
     }
@@ -513,7 +512,7 @@ public final class VoxelCommands {
         if (player == null) return 0;
 
         int radius = IntegerArgumentType.getInteger(ctx, "radius");
-        PREVIEW.previewSphere(player, radius);
+        PreviewService.previewSphere(player, radius);
         ctx.getSource().sendFeedback(() -> Text.literal("VoxelPreview: OK"), false);
         return Command.SINGLE_SUCCESS;
     }
@@ -524,7 +523,7 @@ public final class VoxelCommands {
 
         int radius = IntegerArgumentType.getInteger(ctx, "radius");
         int height = IntegerArgumentType.getInteger(ctx, "height");
-        PREVIEW.previewCylinder(player, radius, height);
+        PreviewService.previewCylinder(player, radius, height);
         ctx.getSource().sendFeedback(() -> Text.literal("VoxelPreview: OK"), false);
         return Command.SINGLE_SUCCESS;
     }
@@ -535,7 +534,7 @@ public final class VoxelCommands {
 
         int base = IntegerArgumentType.getInteger(ctx, "base");
         int height = IntegerArgumentType.getInteger(ctx, "height");
-        PREVIEW.previewPyramid(player, base, height);
+        PreviewService.previewPyramid(player, base, height);
         ctx.getSource().sendFeedback(() -> Text.literal("VoxelPreview: OK"), false);
         return Command.SINGLE_SUCCESS;
     }

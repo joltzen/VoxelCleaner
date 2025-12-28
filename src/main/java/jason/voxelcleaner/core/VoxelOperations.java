@@ -313,7 +313,7 @@ public final class VoxelOperations {
         long now = System.currentTimeMillis();
 
         Direction f = player.getHorizontalFacing();
-        BlockPos center = player.getBlockPos().offset(f, 1).up(radius / 2);
+        BlockPos center = player.getBlockPos().offset(f, Math.max(2, radius + 2)).up(radius);
 
         int r2 = radius * radius;
         int inner2 = (radius - 1) * (radius - 1);
@@ -358,7 +358,7 @@ public final class VoxelOperations {
         long now = System.currentTimeMillis();
 
         Direction f = player.getHorizontalFacing();
-        BlockPos base = player.getBlockPos().offset(f, 1);
+        BlockPos base = player.getBlockPos().offset(f, Math.max(2, radius + 2));
 
         int r2 = radius * radius;
         int inner2 = (radius - 1) * (radius - 1);
@@ -403,7 +403,7 @@ public final class VoxelOperations {
         long now = System.currentTimeMillis();
 
         Direction f = player.getHorizontalFacing();
-        BlockPos base = player.getBlockPos().offset(f, 1);
+        BlockPos base = player.getBlockPos().offset(f, Math.max(2, (baseSize / 2) + 2));
 
         int half = baseSize / 2;
         BlockState target = material.getDefaultState();
