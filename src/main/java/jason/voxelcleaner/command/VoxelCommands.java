@@ -9,6 +9,7 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 
 import jason.voxelcleaner.config.VoxelConfig;
 import jason.voxelcleaner.core.VoxelOperations;
+import jason.voxelcleaner.core.PreviewService;
 import jason.voxelcleaner.history.HistoryService;
 import jason.voxelcleaner.model.VoxelModels.Result;
 import jason.voxelcleaner.util.CommandUtil;
@@ -30,6 +31,7 @@ import static net.minecraft.server.command.CommandManager.literal;
 public final class VoxelCommands {
 
     private static final VoxelOperations OPS = new VoxelOperations();
+    private static final PreviewService PREVIEW = new PreviewService();
     private static final HistoryService HISTORY = new HistoryService();
 
     private VoxelCommands() {}
@@ -67,59 +69,176 @@ public final class VoxelCommands {
                                 .then(argument("count", IntegerArgumentType.integer(1, VoxelConfig.MAX_HISTORY_LINES))
                                         .executes(ctx -> history(ctx, IntegerArgumentType.getInteger(ctx, "count")))))
 
-                        // main operation: clean/hollow
-                        .then(argument("width", IntegerArgumentType.integer(1, VoxelConfig.MAX_W))
+
+                        // -----------------------------------------------------------------
+                        // replace
+                        // Syntax: /vc replace <w> <h> <d> <from> <to> [shell|inside] [chance <1..100>] [force|override]
+                        // -----------------------------------------------------------------
+                        .then(literal("replace")
+                                .then(argument("width", IntegerArgumentType.integer(1, VoxelConfig.MAX_W))
+                                        .then(argument("height", IntegerArgumentType.integer(1, VoxelConfig.MAX_H))
+                                                .then(argument("depth", IntegerArgumentType.integer(1, VoxelConfig.MAX_D))
+                                                        .then(argument("from", BlockStateArgumentType.blockState(registryAccess))
+                                                                .then(argument("to", BlockStateArgumentType.blockState(registryAccess))
+                                                                        .executes(ctx -> runReplace(ctx, false, false, 100, false))
+                                                                        .then(literal("shell")
+                                                                                .executes(ctx -> runReplace(ctx, true, false, 100, false))
+                                                                                .then(literal("force").executes(ctx -> runReplace(ctx, true, false, 100, true)))
+                                                                                .then(literal("override").executes(ctx -> runReplace(ctx, true, false, 100, true)))
+                                                                                .then(literal("chance")
+                                                                                        .then(argument("percent", IntegerArgumentType.integer(1, 100))
+                                                                                                .executes(ctx -> runReplace(ctx, true, false, IntegerArgumentType.getInteger(ctx, "percent"), false))
+                                                                                                .then(literal("force").executes(ctx -> runReplace(ctx, true, false, IntegerArgumentType.getInteger(ctx, "percent"), true)))
+                                                                                                .then(literal("override").executes(ctx -> runReplace(ctx, true, false, IntegerArgumentType.getInteger(ctx, "percent"), true))))))
+                                                                        .then(literal("inside")
+                                                                                .executes(ctx -> runReplace(ctx, false, true, 100, false))
+                                                                                .then(literal("force").executes(ctx -> runReplace(ctx, false, true, 100, true)))
+                                                                                .then(literal("override").executes(ctx -> runReplace(ctx, false, true, 100, true)))
+                                                                                .then(literal("chance")
+                                                                                        .then(argument("percent", IntegerArgumentType.integer(1, 100))
+                                                                                                .executes(ctx -> runReplace(ctx, false, true, IntegerArgumentType.getInteger(ctx, "percent"), false))
+                                                                                                .then(literal("force").executes(ctx -> runReplace(ctx, false, true, IntegerArgumentType.getInteger(ctx, "percent"), true)))
+                                                                                                .then(literal("override").executes(ctx -> runReplace(ctx, false, true, IntegerArgumentType.getInteger(ctx, "percent"), true))))))
+                                                                        .then(literal("chance")
+                                                                                .then(argument("percent", IntegerArgumentType.integer(1, 100))
+                                                                                        .executes(ctx -> runReplace(ctx, false, false, IntegerArgumentType.getInteger(ctx, "percent"), false))
+                                                                                        .then(literal("force").executes(ctx -> runReplace(ctx, false, false, IntegerArgumentType.getInteger(ctx, "percent"), true)))
+                                                                                        .then(literal("override").executes(ctx -> runReplace(ctx, false, false, IntegerArgumentType.getInteger(ctx, "percent"), true)))))
+                                                                        .then(literal("force").executes(ctx -> runReplace(ctx, false, false, 100, true)))
+                                                                        .then(literal("override").executes(ctx -> runReplace(ctx, false, false, 100, true)))
+                                                                ))))))
+
+        // -----------------------------------------------------------------
+        // shapes
+        // Syntax: /vc shape sphere <radius> <material> [hollow] [force|override]
+        //         /vc shape cylinder <radius> <height> <material> [hollow] [force|override]
+        //         /vc shape pyramid <base> <height> <material> [hollow] [force|override]
+        // -----------------------------------------------------------------
+                        .then(literal("shape")
+                .then(literal("sphere")
+                        .then(argument("radius", IntegerArgumentType.integer(1, VoxelConfig.MAX_W))
+                                .then(argument("material", BlockStateArgumentType.blockState(registryAccess))
+                                        .executes(ctx -> runShapeSphere(ctx, false, false))
+                                        .then(literal("hollow").executes(ctx -> runShapeSphere(ctx, true, false))
+                                                .then(literal("force").executes(ctx -> runShapeSphere(ctx, true, true)))
+                                                .then(literal("override").executes(ctx -> runShapeSphere(ctx, true, true))))
+                                        .then(literal("force").executes(ctx -> runShapeSphere(ctx, false, true)))
+                                        .then(literal("override").executes(ctx -> runShapeSphere(ctx, false, true)))
+                                )))
+                .then(literal("cylinder")
+                        .then(argument("radius", IntegerArgumentType.integer(1, VoxelConfig.MAX_W))
                                 .then(argument("height", IntegerArgumentType.integer(1, VoxelConfig.MAX_H))
-                                        .then(argument("depth", IntegerArgumentType.integer(1, VoxelConfig.MAX_D))
+                                        .then(argument("material", BlockStateArgumentType.blockState(registryAccess))
+                                                .executes(ctx -> runShapeCylinder(ctx, false, false))
+                                                .then(literal("hollow").executes(ctx -> runShapeCylinder(ctx, true, false))
+                                                        .then(literal("force").executes(ctx -> runShapeCylinder(ctx, true, true)))
+                                                        .then(literal("override").executes(ctx -> runShapeCylinder(ctx, true, true))))
+                                                .then(literal("force").executes(ctx -> runShapeCylinder(ctx, false, true)))
+                                                .then(literal("override").executes(ctx -> runShapeCylinder(ctx, false, true)))
+                                        ))))
+                .then(literal("pyramid")
+                        .then(argument("base", IntegerArgumentType.integer(1, VoxelConfig.MAX_W))
+                                .then(argument("height", IntegerArgumentType.integer(1, VoxelConfig.MAX_H))
+                                        .then(argument("material", BlockStateArgumentType.blockState(registryAccess))
+                                                .executes(ctx -> runShapePyramid(ctx, false, false))
+                                                .then(literal("hollow").executes(ctx -> runShapePyramid(ctx, true, false))
+                                                        .then(literal("force").executes(ctx -> runShapePyramid(ctx, true, true)))
+                                                        .then(literal("override").executes(ctx -> runShapePyramid(ctx, true, true))))
+                                                .then(literal("force").executes(ctx -> runShapePyramid(ctx, false, true)))
+                                                .then(literal("override").executes(ctx -> runShapePyramid(ctx, false, true)))
+                                        ))))
+        )
 
-                                                .executes(ctx -> runClean(ctx, null, false, false))
+                // -----------------------------------------------------------------
+                // preview (particles)
+                // Syntax: /vc preview clean|room|replace <...>
+                //         /vc preview shape sphere|cylinder|pyramid <...>
+                // -----------------------------------------------------------------
+                .then(literal("preview")
+                        .then(literal("clean")
+                                .then(argument("width", IntegerArgumentType.integer(1, VoxelConfig.MAX_W))
+                                        .then(argument("height", IntegerArgumentType.integer(1, VoxelConfig.MAX_H))
+                                                .then(argument("depth", IntegerArgumentType.integer(1, VoxelConfig.MAX_D))
+                                                        .executes(ctx -> runPreviewBox(ctx, true))))))
+                        .then(literal("room")
+                                .then(argument("width", IntegerArgumentType.integer(1, VoxelConfig.MAX_W))
+                                        .then(argument("height", IntegerArgumentType.integer(1, VoxelConfig.MAX_H))
+                                                .then(argument("depth", IntegerArgumentType.integer(1, VoxelConfig.MAX_D))
+                                                        .executes(ctx -> runPreviewBox(ctx, true))))))
+                        .then(literal("replace")
+                                .then(argument("width", IntegerArgumentType.integer(1, VoxelConfig.MAX_W))
+                                        .then(argument("height", IntegerArgumentType.integer(1, VoxelConfig.MAX_H))
+                                                .then(argument("depth", IntegerArgumentType.integer(1, VoxelConfig.MAX_D))
+                                                        .executes(ctx -> runPreviewBox(ctx, false))))))
+                        .then(literal("shape")
+                                .then(literal("sphere")
+                                        .then(argument("radius", IntegerArgumentType.integer(1, VoxelConfig.MAX_W))
+                                                .executes(ctx -> runPreviewSphere(ctx))))
+                                .then(literal("cylinder")
+                                        .then(argument("radius", IntegerArgumentType.integer(1, VoxelConfig.MAX_W))
+                                                .then(argument("height", IntegerArgumentType.integer(1, VoxelConfig.MAX_H))
+                                                        .executes(ctx -> runPreviewCylinder(ctx)))))
+                                .then(literal("pyramid")
+                                        .then(argument("base", IntegerArgumentType.integer(1, VoxelConfig.MAX_W))
+                                                .then(argument("height", IntegerArgumentType.integer(1, VoxelConfig.MAX_H))
+                                                        .executes(ctx -> runPreviewPyramid(ctx)))))
+                        )
+                )
 
-                                                // options: [loot|drops] [force|override]
-                                                .then(literal("loot")
-                                                        .executes(ctx -> runClean(ctx, null, false, true))
-                                                        .then(literal("force")
-                                                                .executes(ctx -> runClean(ctx, null, true, true)))
-                                                        .then(literal("override")
-                                                                .executes(ctx -> runClean(ctx, null, true, true))))
-                                                .then(literal("drops")
-                                                        .executes(ctx -> runClean(ctx, null, false, true))
-                                                        .then(literal("force")
-                                                                .executes(ctx -> runClean(ctx, null, true, true)))
-                                                        .then(literal("override")
-                                                                .executes(ctx -> runClean(ctx, null, true, true))))
 
-                                                // allow force-only (still shows loot first in tab completion)
+                // main operation: clean/hollow
+                .then(argument("width", IntegerArgumentType.integer(1, VoxelConfig.MAX_W))
+                        .then(argument("height", IntegerArgumentType.integer(1, VoxelConfig.MAX_H))
+                                .then(argument("depth", IntegerArgumentType.integer(1, VoxelConfig.MAX_D))
+
+                                        .executes(ctx -> runClean(ctx, null, false, false))
+
+                                        // options: [loot|drops] [force|override]
+                                        .then(literal("loot")
+                                                .executes(ctx -> runClean(ctx, null, false, true))
                                                 .then(literal("force")
-                                                        .executes(ctx -> runClean(ctx, null, true, false)))
+                                                        .executes(ctx -> runClean(ctx, null, true, true)))
                                                 .then(literal("override")
-                                                        .executes(ctx -> runClean(ctx, null, true, false)))
+                                                        .executes(ctx -> runClean(ctx, null, true, true))))
+                                        .then(literal("drops")
+                                                .executes(ctx -> runClean(ctx, null, false, true))
+                                                .then(literal("force")
+                                                        .executes(ctx -> runClean(ctx, null, true, true)))
+                                                .then(literal("override")
+                                                        .executes(ctx -> runClean(ctx, null, true, true))))
 
-                                                // material variant
-                                                .then(argument("material", BlockStateArgumentType.blockState(registryAccess))
+                                        // allow force-only (still shows loot first in tab completion)
+                                        .then(literal("force")
+                                                .executes(ctx -> runClean(ctx, null, true, false)))
+                                        .then(literal("override")
+                                                .executes(ctx -> runClean(ctx, null, true, false)))
 
-                                                        .executes(ctx -> runClean(ctx, CommandUtil.getBlock(ctx, "material"), false, false))
+                                        // material variant
+                                        .then(argument("material", BlockStateArgumentType.blockState(registryAccess))
 
-                                                        .then(literal("loot")
-                                                                .executes(ctx -> runClean(ctx, CommandUtil.getBlock(ctx, "material"), false, true))
-                                                                .then(literal("force")
-                                                                        .executes(ctx -> runClean(ctx, CommandUtil.getBlock(ctx, "material"), true, true)))
-                                                                .then(literal("override")
-                                                                        .executes(ctx -> runClean(ctx, CommandUtil.getBlock(ctx, "material"), true, true))))
-                                                        .then(literal("drops")
-                                                                .executes(ctx -> runClean(ctx, CommandUtil.getBlock(ctx, "material"), false, true))
-                                                                .then(literal("force")
-                                                                        .executes(ctx -> runClean(ctx, CommandUtil.getBlock(ctx, "material"), true, true)))
-                                                                .then(literal("override")
-                                                                        .executes(ctx -> runClean(ctx, CommandUtil.getBlock(ctx, "material"), true, true))))
+                                                .executes(ctx -> runClean(ctx, CommandUtil.getBlock(ctx, "material"), false, false))
 
+                                                .then(literal("loot")
+                                                        .executes(ctx -> runClean(ctx, CommandUtil.getBlock(ctx, "material"), false, true))
                                                         .then(literal("force")
-                                                                .executes(ctx -> runClean(ctx, CommandUtil.getBlock(ctx, "material"), true, false)))
+                                                                .executes(ctx -> runClean(ctx, CommandUtil.getBlock(ctx, "material"), true, true)))
                                                         .then(literal("override")
-                                                                .executes(ctx -> runClean(ctx, CommandUtil.getBlock(ctx, "material"), true, false)))
-                                                )
+                                                                .executes(ctx -> runClean(ctx, CommandUtil.getBlock(ctx, "material"), true, true))))
+                                                .then(literal("drops")
+                                                        .executes(ctx -> runClean(ctx, CommandUtil.getBlock(ctx, "material"), false, true))
+                                                        .then(literal("force")
+                                                                .executes(ctx -> runClean(ctx, CommandUtil.getBlock(ctx, "material"), true, true)))
+                                                        .then(literal("override")
+                                                                .executes(ctx -> runClean(ctx, CommandUtil.getBlock(ctx, "material"), true, true))))
+
+                                                .then(literal("force")
+                                                        .executes(ctx -> runClean(ctx, CommandUtil.getBlock(ctx, "material"), true, false)))
+                                                .then(literal("override")
+                                                        .executes(ctx -> runClean(ctx, CommandUtil.getBlock(ctx, "material"), true, false)))
                                         )
                                 )
-                        );
+                        )
+                );
 
         dispatcher.register(buildCleaner.apply(literal("voxelcleaner")));
         dispatcher.register(buildCleaner.apply(literal("vc")));
@@ -228,6 +347,18 @@ public final class VoxelCommands {
             player.sendMessage(Text.literal("Hinweis: Undo/Redo ist persistent (über Server-Neustart hinweg)."), false);
         }
 
+
+        player.sendMessage(Text.literal(""), false);
+        player.sendMessage(Text.literal("/vc replace <w> <h> <d> <from> <to> [shell|inside] [chance <1..100>] [force|override]"), false);
+        player.sendMessage(Text.literal("  Beispiel:  /vc replace 21 9 21 minecraft:stone minecraft:andesite chance 35"), false);
+
+        player.sendMessage(Text.literal("/vc shape sphere <radius> <material> [hollow] [force|override]"), false);
+        player.sendMessage(Text.literal("/vc shape cylinder <radius> <height> <material> [hollow] [force|override]"), false);
+        player.sendMessage(Text.literal("/vc shape pyramid <base> <height> <material> [hollow] [force|override]"), false);
+
+        player.sendMessage(Text.literal("/vc preview clean|room|replace <w> <h> <d>"), false);
+        player.sendMessage(Text.literal("/vc preview shape sphere <radius>"), false);
+
         return Command.SINGLE_SUCCESS;
     }
 
@@ -281,6 +412,134 @@ public final class VoxelCommands {
         }
         return Command.SINGLE_SUCCESS;
     }
+
+    private static int runReplace(com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx,
+                                  boolean shellOnly, boolean insideOnly, int chancePercent, boolean force) {
+        ServerPlayerEntity player = CommandUtil.player(ctx.getSource());
+        if (player == null) return 0;
+
+        int w = IntegerArgumentType.getInteger(ctx, "width");
+        int h = IntegerArgumentType.getInteger(ctx, "height");
+        int d = IntegerArgumentType.getInteger(ctx, "depth");
+
+        Block from = CommandUtil.getBlock(ctx, "from");
+        Block to = CommandUtil.getBlock(ctx, "to");
+
+        Result r = OPS.replace(player, w, h, d, from, to, force, shellOnly, insideOnly, chancePercent);
+
+        if (!r.action().snapshots().isEmpty()) {
+            HISTORY.pushUndo(player.getUuid(), r.action());
+            HISTORY.clearRedo(player.getUuid());
+        }
+
+        ctx.getSource().sendFeedback(() -> Text.literal("VoxelReplace: " + r.action().changed()), false);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private static int runShapeSphere(com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx,
+                                      boolean hollow, boolean force) {
+        ServerPlayerEntity player = CommandUtil.player(ctx.getSource());
+        if (player == null) return 0;
+
+        int radius = IntegerArgumentType.getInteger(ctx, "radius");
+        Block material = CommandUtil.getBlock(ctx, "material");
+
+        Result r = OPS.shapeSphere(player, radius, material, hollow, force);
+
+        if (!r.action().snapshots().isEmpty()) {
+            HISTORY.pushUndo(player.getUuid(), r.action());
+            HISTORY.clearRedo(player.getUuid());
+        }
+
+        ctx.getSource().sendFeedback(() -> Text.literal("VoxelShape Sphere: " + r.action().changed()), false);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private static int runShapeCylinder(com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx,
+                                        boolean hollow, boolean force) {
+        ServerPlayerEntity player = CommandUtil.player(ctx.getSource());
+        if (player == null) return 0;
+
+        int radius = IntegerArgumentType.getInteger(ctx, "radius");
+        int height = IntegerArgumentType.getInteger(ctx, "height");
+        Block material = CommandUtil.getBlock(ctx, "material");
+
+        Result r = OPS.shapeCylinder(player, radius, height, material, hollow, force);
+
+        if (!r.action().snapshots().isEmpty()) {
+            HISTORY.pushUndo(player.getUuid(), r.action());
+            HISTORY.clearRedo(player.getUuid());
+        }
+
+        ctx.getSource().sendFeedback(() -> Text.literal("VoxelShape Cylinder: " + r.action().changed()), false);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private static int runShapePyramid(com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx,
+                                       boolean hollow, boolean force) {
+        ServerPlayerEntity player = CommandUtil.player(ctx.getSource());
+        if (player == null) return 0;
+
+        int base = IntegerArgumentType.getInteger(ctx, "base");
+        int height = IntegerArgumentType.getInteger(ctx, "height");
+        Block material = CommandUtil.getBlock(ctx, "material");
+
+        Result r = OPS.shapePyramid(player, base, height, material, hollow, force);
+
+        if (!r.action().snapshots().isEmpty()) {
+            HISTORY.pushUndo(player.getUuid(), r.action());
+            HISTORY.clearRedo(player.getUuid());
+        }
+
+        ctx.getSource().sendFeedback(() -> Text.literal("VoxelShape Pyramid: " + r.action().changed()), false);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private static int runPreviewBox(com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx, boolean addShellPadding) {
+        ServerPlayerEntity player = CommandUtil.player(ctx.getSource());
+        if (player == null) return 0;
+
+        int w = IntegerArgumentType.getInteger(ctx, "width");
+        int h = IntegerArgumentType.getInteger(ctx, "height");
+        int d = IntegerArgumentType.getInteger(ctx, "depth");
+
+        PREVIEW.previewBox(player, w, h, d, addShellPadding);
+        ctx.getSource().sendFeedback(() -> Text.literal("VoxelPreview: OK"), false);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private static int runPreviewSphere(com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx) {
+        ServerPlayerEntity player = CommandUtil.player(ctx.getSource());
+        if (player == null) return 0;
+
+        int radius = IntegerArgumentType.getInteger(ctx, "radius");
+        PREVIEW.previewSphere(player, radius);
+        ctx.getSource().sendFeedback(() -> Text.literal("VoxelPreview: OK"), false);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private static int runPreviewCylinder(com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx) {
+        ServerPlayerEntity player = CommandUtil.player(ctx.getSource());
+        if (player == null) return 0;
+
+        int radius = IntegerArgumentType.getInteger(ctx, "radius");
+        int height = IntegerArgumentType.getInteger(ctx, "height");
+        PREVIEW.previewCylinder(player, radius, height);
+        ctx.getSource().sendFeedback(() -> Text.literal("VoxelPreview: OK"), false);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private static int runPreviewPyramid(com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx) {
+        ServerPlayerEntity player = CommandUtil.player(ctx.getSource());
+        if (player == null) return 0;
+
+        int base = IntegerArgumentType.getInteger(ctx, "base");
+        int height = IntegerArgumentType.getInteger(ctx, "height");
+        PREVIEW.previewPyramid(player, base, height);
+        ctx.getSource().sendFeedback(() -> Text.literal("VoxelPreview: OK"), false);
+        return Command.SINGLE_SUCCESS;
+    }
+
 
     private static int undo(com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx, int count) {
         ServerPlayerEntity player = CommandUtil.player(ctx.getSource());
