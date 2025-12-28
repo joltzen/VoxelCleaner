@@ -76,9 +76,10 @@ public final class PreviewService {
         int minW = -(ow / 2);
         int maxW = minW + ow - 1;
 
+        assert world.getServer() != null;
         long now = world.getServer().getTicks();
         PreviewRequest req = PreviewRequest.box(
-                player.getUuid(), now, DEFAULT_DURATION_TICKS, DEFAULT_REFRESH_EVERY,
+                player.getUuid(), now,
                 new BoxData(base, f, s, ow, oh, od, minW, maxW)
         );
         ACTIVE.put(player.getUuid(), req);
@@ -92,9 +93,10 @@ public final class PreviewService {
         Direction f = player.getHorizontalFacing();
         BlockPos center = player.getBlockPos().offset(f, 1).up(radius / 2);
 
+        assert world.getServer() != null;
         long now = world.getServer().getTicks();
         PreviewRequest req = PreviewRequest.sphere(
-                player.getUuid(), now, DEFAULT_DURATION_TICKS, DEFAULT_REFRESH_EVERY,
+                player.getUuid(), now,
                 new SphereData(center, radius)
         );
         ACTIVE.put(player.getUuid(), req);
@@ -108,9 +110,10 @@ public final class PreviewService {
         Direction f = player.getHorizontalFacing();
         BlockPos base = player.getBlockPos().offset(f, 1);
 
+        assert world.getServer() != null;
         long now = world.getServer().getTicks();
         PreviewRequest req = PreviewRequest.cylinder(
-                player.getUuid(), now, DEFAULT_DURATION_TICKS, DEFAULT_REFRESH_EVERY,
+                player.getUuid(), now,
                 new CylinderData(base, radius, height)
         );
         ACTIVE.put(player.getUuid(), req);
@@ -124,9 +127,10 @@ public final class PreviewService {
         Direction f = player.getHorizontalFacing();
         BlockPos base = player.getBlockPos().offset(f, 1);
 
+        assert world.getServer() != null;
         long now = world.getServer().getTicks();
         PreviewRequest req = PreviewRequest.pyramid(
-                player.getUuid(), now, DEFAULT_DURATION_TICKS, DEFAULT_REFRESH_EVERY,
+                player.getUuid(), now,
                 new PyramidData(base, baseSize, height)
         );
         ACTIVE.put(player.getUuid(), req);
@@ -145,8 +149,7 @@ public final class PreviewService {
                     boolean onY = dy == 0 || dy == d.oh - 1;
                     boolean onZ = dz == 0 || dz == d.od - 1;
 
-                    int planes = (onX ? 1 : 0) + (onY ? 1 : 0) + (onZ ? 1 : 0);
-                    if (planes < 2) continue;
+                    if (!(onX || onY || onZ)) continue;
 
                     if (((dx - d.minW) + dy + dz) % 2 != 0) continue;
 
@@ -205,11 +208,10 @@ public final class PreviewService {
         for (int y = 0; y < d.height; y++) {
             int layerHalf = Math.max(0, half - (int) Math.floor((double) y * (double) half / (double) Math.max(1, d.height - 1)));
             int min = -layerHalf;
-            int max = layerHalf;
 
-            for (int x = min; x <= max; x++) {
-                for (int z = min; z <= max; z++) {
-                    boolean boundary = x == min || x == max || z == min || z == max || y == 0 || y == d.height - 1;
+            for (int x = min; x <= layerHalf; x++) {
+                for (int z = min; z <= layerHalf; z++) {
+                    boolean boundary = x == min || x == layerHalf || z == min || z == layerHalf || y == 0 || y == d.height - 1;
                     if (!boundary) continue;
                     if (((x + y + z) & 1) != 0) continue;
 
@@ -228,8 +230,8 @@ public final class PreviewService {
                 p.getX() + 0.5,
                 p.getY() + 0.5,
                 p.getZ() + 0.5,
-                1,
-                0.0, 0.0, 0.0,
+                2,
+                0.0, 0.03, 0.03,
                 0.0
         );
     }
@@ -266,20 +268,20 @@ public final class PreviewService {
             this.pyramid = pyramid;
         }
 
-        static PreviewRequest box(UUID playerId, long nowTick, int durationTicks, int refreshEvery, BoxData d) {
-            return new PreviewRequest(Type.BOX, nowTick + durationTicks, refreshEvery, nowTick, d, null, null, null);
+        static PreviewRequest box(UUID playerId, long nowTick, BoxData d) {
+            return new PreviewRequest(Type.BOX, nowTick + PreviewService.DEFAULT_DURATION_TICKS, PreviewService.DEFAULT_REFRESH_EVERY, nowTick, d, null, null, null);
         }
 
-        static PreviewRequest sphere(UUID playerId, long nowTick, int durationTicks, int refreshEvery, SphereData d) {
-            return new PreviewRequest(Type.SPHERE, nowTick + durationTicks, refreshEvery, nowTick, null, d, null, null);
+        static PreviewRequest sphere(UUID playerId, long nowTick, SphereData d) {
+            return new PreviewRequest(Type.SPHERE, nowTick + PreviewService.DEFAULT_DURATION_TICKS, PreviewService.DEFAULT_REFRESH_EVERY, nowTick, null, d, null, null);
         }
 
-        static PreviewRequest cylinder(UUID playerId, long nowTick, int durationTicks, int refreshEvery, CylinderData d) {
-            return new PreviewRequest(Type.CYLINDER, nowTick + durationTicks, refreshEvery, nowTick, null, null, d, null);
+        static PreviewRequest cylinder(UUID playerId, long nowTick, CylinderData d) {
+            return new PreviewRequest(Type.CYLINDER, nowTick + PreviewService.DEFAULT_DURATION_TICKS, PreviewService.DEFAULT_REFRESH_EVERY, nowTick, null, null, d, null);
         }
 
-        static PreviewRequest pyramid(UUID playerId, long nowTick, int durationTicks, int refreshEvery, PyramidData d) {
-            return new PreviewRequest(Type.PYRAMID, nowTick + durationTicks, refreshEvery, nowTick, null, null, null, d);
+        static PreviewRequest pyramid(UUID playerId, long nowTick, PyramidData d) {
+            return new PreviewRequest(Type.PYRAMID, nowTick + PreviewService.DEFAULT_DURATION_TICKS, PreviewService.DEFAULT_REFRESH_EVERY, nowTick, null, null, null, d);
         }
     }
 }
